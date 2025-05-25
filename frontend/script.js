@@ -8,8 +8,10 @@ window.addEventListener('DOMContentLoaded', () => {
 
       const startList = document.getElementById('startList');
       const destList = document.getElementById('destList');
+      startList.innerHTML = '';
+      destList.innerHTML = '';
 
-      data.forEach(loc => {
+      locations.forEach(loc => {
         const opt1 = document.createElement('option');
         opt1.value = loc.name;
         startList.appendChild(opt1);
@@ -19,19 +21,19 @@ window.addEventListener('DOMContentLoaded', () => {
         destList.appendChild(opt2);
       });
 
-      // QR alias override
+      // Auto-fill origin if QR param is in URL
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.has('qr')) {
-        const qrAlias = urlParams.get('qr');
-        const matched = locations.find(l => l.qr_alias === qrAlias);
-        if (matched) {
-          document.getElementById('startInput').value = matched.name;
+        const qr = urlParams.get('qr');
+        const match = locations.find(l => l.qr_alias === qr);
+        if (match) {
+          document.getElementById('startInput').value = match.name;
         }
       }
-    })
-    .catch(err => console.error('Failed to load locations:', err));
+    });
 });
 
+// Handle QR scanning
 document.getElementById('scanBtn').addEventListener('click', () => {
   document.getElementById('reader').style.display = 'block';
   const html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: 250 });
@@ -47,9 +49,11 @@ document.getElementById('scanBtn').addEventListener('click', () => {
   }, () => {});
 });
 
+// Route logic
 document.getElementById('routeBtn').addEventListener('click', () => {
   const startName = document.getElementById('startInput').value;
   const destName = document.getElementById('destInput').value;
+
   const start = locations.find(l => l.name === startName);
   const dest = locations.find(l => l.name === destName);
 
@@ -74,16 +78,15 @@ document.getElementById('routeBtn').addEventListener('click', () => {
 
     fetch('/api/markers')
       .then(res => res.json())
-      .then(allMarkers => {
-        const startMarker = allMarkers.find(m => m.name === start.name);
-        const destMarker = allMarkers.find(m => m.name === dest.name);
+      .then(markers => {
+        const startMarker = markers.find(m => m.name === start.name);
+        const destMarker = markers.find(m => m.name === dest.name);
 
         if (!startMarker || !destMarker) {
           alert('Markers missing for selected locations.');
           return;
         }
 
-        // Draw line
         ctx.beginPath();
         ctx.moveTo(startMarker.x, startMarker.y);
         ctx.lineTo(destMarker.x, destMarker.y);
@@ -91,13 +94,11 @@ document.getElementById('routeBtn').addEventListener('click', () => {
         ctx.lineWidth = 3;
         ctx.stroke();
 
-        // Mark start
         ctx.fillStyle = 'blue';
         ctx.beginPath();
         ctx.arc(startMarker.x, startMarker.y, 5, 0, 2 * Math.PI);
         ctx.fill();
 
-        // Mark destination
         ctx.beginPath();
         ctx.arc(destMarker.x, destMarker.y, 5, 0, 2 * Math.PI);
         ctx.fill();
