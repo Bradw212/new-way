@@ -28,20 +28,17 @@
     .marker {
       width: 14px; height: 14px; background: red; border: 2px solid white;
       border-radius: 50%; position: absolute; transform: translate(-50%, -50%);
-      cursor: pointer;
+      cursor: move;
+    }
+    .draggable-marker {
+      width: 20px; height: 20px; background: green;
+      display: inline-block; margin-left: 5px;
+      cursor: grab; border-radius: 50%;
     }
     table { border-collapse: collapse; margin-top: 10px; }
     table, th, td { border: 1px solid #ccc; padding: 5px; }
     input, select, button { margin: 5px; padding: 5px; }
     #zoomControls { margin-top: 10px; }
-    #fullscreenOverlay {
-      position: fixed;
-      top: 0; left: 0;
-      width: 100%; height: 100%;
-      background: #000;
-      z-index: 999;
-      display: none;
-    }
   </style>
 </head>
 <body>
@@ -62,14 +59,6 @@
     <button onclick="setZoom(1)">Reset Zoom</button>
     <button onclick="setZoom(currentZoom + 0.2)">+ Zoom In</button>
     <button onclick="setZoom(currentZoom - 0.2)">– Zoom Out</button>
-    <button onclick="toggleFullscreen()">Fullscreen</button>
-  </div>
-  <div id="fullscreenOverlay" onclick="exitFullscreen()">
-    <div id="mapWrapper">
-      <div id="mapContainer">
-        <img id="adminMapImage" src="" />
-      </div>
-    </div>
   </div>
   <div id="mapWrapper">
     <div id="mapContainer">
@@ -98,7 +87,6 @@
 let selectedFloor = '';
 let markers = [];
 let locations = [];
-let pendingLocationForPin = null;
 let currentZoom = 1;
 let isDragging = false;
 let dragStart = {x: 0, y: 0};
@@ -106,37 +94,18 @@ let panOffset = {x: 0, y: 0};
 
 function setZoom(scale) {
   currentZoom = Math.max(0.5, Math.min(3, scale));
-  renderMap();
+  document.getElementById('mapContainer').style.transform = `translate(${panOffset.x}px, ${panOffset.y}px) scale(${currentZoom})`;
 }
 
-function toggleFullscreen() {
-  document.getElementById('fullscreenOverlay').style.display = 'block';
-  renderMap();
-}
-
-function exitFullscreen() {
-  document.getElementById('fullscreenOverlay').style.display = 'none';
-}
-
-function renderMap() {
-  const container = document.querySelectorAll('#mapContainer');
-  container.forEach(div => div.style.transform = `translate(${panOffset.x}px, ${panOffset.y}px) scale(${currentZoom})`);
-}
-
-document.querySelectorAll('#mapWrapper').forEach(wrapper => {
-  wrapper.addEventListener('mousedown', e => {
-    isDragging = true;
-    dragStart = { x: e.clientX - panOffset.x, y: e.clientY - panOffset.y };
-    e.preventDefault();
-  });
+document.getElementById('mapWrapper').addEventListener('mousedown', e => {
+  isDragging = true;
+  dragStart = { x: e.clientX - panOffset.x, y: e.clientY - panOffset.y };
 });
-
 document.addEventListener('mouseup', () => isDragging = false);
-
 document.addEventListener('mousemove', e => {
   if (!isDragging) return;
   panOffset = { x: e.clientX - dragStart.x, y: e.clientY - dragStart.y };
-  renderMap();
+  document.getElementById('mapContainer').style.transform = `translate(${panOffset.x}px, ${panOffset.y}px) scale(${currentZoom})`;
 });
 
 function fetchMarkers() {
@@ -172,18 +141,14 @@ function fetchLocations() {
           document.getElementById('locZone').value = loc.zone;
           document.getElementById('locQR').value = loc.qr_alias;
         };
-        const delBtn = document.createElement('button');
-        delBtn.textContent = 'Delete';
-        delBtn.onclick = () => fetch('/api/locations/' + loc.id, { method: 'DELETE' }).then(fetchLocations);
-        const pinBtn = document.createElement('button');
-        pinBtn.textContent = 'Place Pin';
-        pinBtn.onclick = () => {
-          pendingLocationForPin = loc;
-          alert('Click on the map to place pin for: ' + loc.name);
-        };
+        const dragPin = document.createElement('div');
+        dragPin.className = 'draggable-marker';
+        dragPin.setAttribute('draggable', true);
+        dragPin.addEventListener('dragstart', e => {
+          e.dataTransfer.setData('text/plain', JSON.stringify(loc));
+        });
         actions.appendChild(editBtn);
-        actions.appendChild(delBtn);
-        actions.appendChild(pinBtn);
+        actions.appendChild(dragPin);
       });
     });
 }
@@ -230,35 +195,32 @@ document.getElementById('loadMapBtn').onclick = () => {
 };
 
 function loadMap() {
-  const img = document.querySelectorAll('#adminMapImage');
-  img.forEach(i => i.src = '/maps/' + selectedFloor + '.png');
-  img.forEach(i => i.onload = () => fetchMarkers());
+  const img = document.getElementById('adminMapImage');
+  img.src = '/maps/' + selectedFloor + '.png';
+  img.onload = () => fetchMarkers();
 }
 
-document.querySelectorAll('#mapContainer').forEach(container => {
-  container.addEventListener('click', function (e) {
-    if (!pendingLocationForPin || !selectedFloor) return;
-    const rect = this.getBoundingClientRect();
-    const x = (e.clientX - rect.left - panOffset.x) / currentZoom;
-    const y = (e.clientY - rect.top - panOffset.y) / currentZoom;
-    fetch('/api/markers', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        location_id: pendingLocationForPin.id,
-        x: Math.round(x),
-        y: Math.round(y),
-        floor: selectedFloor
-      })
-    }).then(() => {
-      pendingLocationForPin = null;
-      fetchMarkers();
-    });
-  });
+document.getElementById('mapContainer').addEventListener('dragover', e => e.preventDefault());
+document.getElementById('mapContainer').addEventListener('drop', e => {
+  e.preventDefault();
+  const loc = JSON.parse(e.dataTransfer.getData('text/plain'));
+  const rect = e.currentTarget.getBoundingClientRect();
+  const x = (e.clientX - rect.left - panOffset.x) / currentZoom;
+  const y = (e.clientY - rect.top - panOffset.y) / currentZoom;
+  fetch('/api/markers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      location_id: loc.id,
+      x: Math.round(x),
+      y: Math.round(y),
+      floor: selectedFloor
+    })
+  }).then(() => fetchMarkers());
 });
 
 function addMarkerToMap(m) {
-  const container = document.querySelector('#mapContainer');
+  const container = document.getElementById('mapContainer');
   const marker = document.createElement('div');
   marker.className = 'marker';
   marker.style.left = m.x + 'px';
