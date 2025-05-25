@@ -6,7 +6,7 @@
   <style>
     body { font-family: Arial, sans-serif; margin: 20px; }
     h1 { margin-bottom: 20px; }
-    #uploadSection, #markerSection, #locationSection { margin-bottom: 30px; }
+    #uploadSection, #markerSection, #locationSection, #gridEditor { margin-bottom: 30px; }
 
     #mapWrapper {
       width: 800px;
@@ -14,6 +14,7 @@
       overflow: hidden;
       border: 1px solid #ccc;
       position: relative;
+      cursor: grab;
     }
 
     #mapContainer {
@@ -29,82 +30,69 @@
     }
 
     .marker {
-      width: 14px;
-      height: 14px;
-      background: red;
-      border: 2px solid white;
-      border-radius: 50%;
-      position: absolute;
-      transform: translate(-50%, -50%);
+      width: 14px; height: 14px; background: red; border: 2px solid white;
+      border-radius: 50%; position: absolute; transform: translate(-50%, -50%);
       cursor: pointer;
     }
 
-    table {
-      border-collapse: collapse;
-      margin-top: 10px;
+    canvas.grid {
+      position: absolute;
+      top: 0; left: 0;
+      pointer-events: none;
     }
 
-    table, th, td {
-      border: 1px solid #ccc;
-      padding: 5px;
-    }
-
-    input, select, button {
-      margin: 5px;
-      padding: 5px;
-    }
-
-    #zoomControls {
-      margin-top: 10px;
-    }
+    table { border-collapse: collapse; margin-top: 10px; }
+    table, th, td { border: 1px solid #ccc; padding: 5px; }
+    input, select, button { margin: 5px; padding: 5px; }
+    #zoomControls { margin-top: 10px; }
   </style>
 </head>
 <body>
-  <h1>Admin Dashboard</h1>
+<h1>Admin Dashboard</h1>
 
-  <div id="uploadSection">
-    <h3>Upload PNG Floor Map</h3>
-    <label>Floor:</label>
-    <input type="text" id="floorInput" placeholder="e.g. 1 or Ground" />
-    <input type="file" id="mapFile" accept=".png" />
-    <button id="uploadBtn">Upload</button>
-    <button id="loadMapBtn">Load Map</button>
-    <p id="uploadStatus"></p>
+<!-- Upload -->
+<div id="uploadSection">
+  <h3>Upload PNG Floor Map</h3>
+  <input type="text" id="floorInput" placeholder="e.g. 1 or Ground" />
+  <input type="file" id="mapFile" accept=".png" />
+  <button id="uploadBtn">Upload</button>
+  <button id="loadMapBtn">Load Map</button>
+  <p id="uploadStatus"></p>
+</div>
+
+<!-- Map Section -->
+<div id="markerSection">
+  <h3>Map View & Pins</h3>
+  <div id="zoomControls">
+    <button onclick="setZoom(1)">Reset Zoom</button>
+    <button onclick="setZoom(currentZoom + 0.2)">+ Zoom In</button>
+    <button onclick="setZoom(currentZoom - 0.2)">– Zoom Out</button>
+    <button onclick="toggleFullscreen()">Fullscreen</button>
   </div>
-
-  <div id="markerSection">
-    <h3>Map View & Pins</h3>
-    <div id="zoomControls">
-      <button onclick="setZoom(1)">Reset Zoom</button>
-      <button onclick="setZoom(currentZoom + 0.2)">+ Zoom In</button>
-      <button onclick="setZoom(currentZoom - 0.2)">– Zoom Out</button>
-      <button onclick="toggleFullscreen()">Fullscreen</button>
+  <div id="mapWrapper">
+    <div id="mapContainer">
+      <img id="adminMapImage" src="" />
+      <canvas id="gridCanvas" class="grid"></canvas>
     </div>
-    <div id="mapWrapper">
-      <div id="mapContainer">
-        <img id="adminMapImage" src="" alt="Map not loaded yet" />
-      </div>
-    </div>
   </div>
+</div>
 
-  <div id="locationSection">
-    <h3>Location Manager</h3>
-    <form id="locationForm">
-      <input type="hidden" id="locationId" />
-      <input type="text" id="locName" placeholder="Location Name" required />
-      <input type="text" id="locFloor" placeholder="Floor" />
-      <input type="text" id="locZone" placeholder="Zone (optional)" />
-      <input type="text" id="locQR" placeholder="QR alias" />
-      <button type="submit">Save Location</button>
-    </form>
-
-    <table id="locationsTable">
-      <thead>
-        <tr><th>Name</th><th>Floor</th><th>Zone</th><th>QR Alias</th><th>Actions</th></tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  </div>
+<!-- Location Manager -->
+<div id="locationSection">
+  <h3>Location Manager</h3>
+  <form id="locationForm">
+    <input type="hidden" id="locationId" />
+    <input type="text" id="locName" placeholder="Location Name" required />
+    <input type="text" id="locFloor" placeholder="Floor" />
+    <input type="text" id="locZone" placeholder="Zone (optional)" />
+    <input type="text" id="locQR" placeholder="QR alias" />
+    <button type="submit">Save Location</button>
+  </form>
+  <table id="locationsTable">
+    <thead><tr><th>Name</th><th>Floor</th><th>Zone</th><th>QR Alias</th><th>Actions</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
 
 <script>
 let selectedFloor = '';
@@ -112,70 +100,84 @@ let markers = [];
 let locations = [];
 let pendingLocationForPin = null;
 let currentZoom = 1;
+let isDragging = false;
+let dragStart = {x: 0, y: 0};
+let panOffset = {x: 0, y: 0};
+let walkableGrid = {};
+const GRID_SIZE = 40; // pixels
 
 function setZoom(scale) {
   currentZoom = Math.max(0.5, Math.min(3, scale));
-  document.getElementById('mapContainer').style.transform = `scale(${currentZoom})`;
+  renderMap();
 }
 
 function toggleFullscreen() {
   const wrapper = document.getElementById('mapWrapper');
-  if (!document.fullscreenElement) {
-    wrapper.requestFullscreen();
-  } else {
-    document.exitFullscreen();
-  }
+  if (!document.fullscreenElement) wrapper.requestFullscreen();
+  else document.exitFullscreen();
 }
 
+function renderMap() {
+  const container = document.getElementById('mapContainer');
+  container.style.transform = `translate(${panOffset.x}px, ${panOffset.y}px) scale(${currentZoom})`;
+}
+
+document.getElementById('mapWrapper').addEventListener('mousedown', e => {
+  isDragging = true;
+  dragStart = { x: e.clientX - panOffset.x, y: e.clientY - panOffset.y };
+  e.preventDefault();
+});
+
+document.addEventListener('mouseup', () => isDragging = false);
+document.addEventListener('mousemove', e => {
+  if (!isDragging) return;
+  panOffset = { x: e.clientX - dragStart.x, y: e.clientY - dragStart.y };
+  renderMap();
+});
+
 function fetchMarkers() {
-  fetch('/api/markers')
-    .then(res => res.json())
-    .then(data => {
-      markers = data;
-      document.querySelectorAll('.marker').forEach(el => el.remove());
-      markers.filter(m => m.floor === selectedFloor).forEach(addMarkerToMap);
-    });
+  fetch('/api/markers').then(res => res.json()).then(data => {
+    markers = data;
+    document.querySelectorAll('.marker').forEach(el => el.remove());
+    markers.filter(m => m.floor === selectedFloor).forEach(addMarkerToMap);
+  });
 }
 
 function fetchLocations() {
-  fetch('/api/locations')
-    .then(res => res.json())
-    .then(data => {
-      locations = data;
-      const tbody = document.querySelector('#locationsTable tbody');
-      tbody.innerHTML = '';
-      data.forEach(loc => {
-        const row = tbody.insertRow();
-        row.insertCell().innerText = loc.name;
-        row.insertCell().innerText = loc.floor;
-        row.insertCell().innerText = loc.zone;
-        row.insertCell().innerText = loc.qr_alias;
-        const actions = row.insertCell();
-        const editBtn = document.createElement('button');
-        editBtn.textContent = 'Edit';
-        editBtn.onclick = () => {
-          document.getElementById('locationId').value = loc.id;
-          document.getElementById('locName').value = loc.name;
-          document.getElementById('locFloor').value = loc.floor;
-          document.getElementById('locZone').value = loc.zone;
-          document.getElementById('locQR').value = loc.qr_alias;
-        };
-        const delBtn = document.createElement('button');
-        delBtn.textContent = 'Delete';
-        delBtn.onclick = () => {
-          fetch('/api/locations/' + loc.id, { method: 'DELETE' }).then(fetchLocations);
-        };
-        const pinBtn = document.createElement('button');
-        pinBtn.textContent = 'Place Pin';
-        pinBtn.onclick = () => {
-          pendingLocationForPin = loc;
-          alert('Click the map to place a pin for: ' + loc.name);
-        };
-        actions.appendChild(editBtn);
-        actions.appendChild(delBtn);
-        actions.appendChild(pinBtn);
-      });
+  fetch('/api/locations').then(res => res.json()).then(data => {
+    locations = data;
+    const tbody = document.querySelector('#locationsTable tbody');
+    tbody.innerHTML = '';
+    data.forEach(loc => {
+      const row = tbody.insertRow();
+      row.insertCell().innerText = loc.name;
+      row.insertCell().innerText = loc.floor;
+      row.insertCell().innerText = loc.zone;
+      row.insertCell().innerText = loc.qr_alias;
+      const actions = row.insertCell();
+      const editBtn = document.createElement('button');
+      editBtn.textContent = 'Edit';
+      editBtn.onclick = () => {
+        document.getElementById('locationId').value = loc.id;
+        document.getElementById('locName').value = loc.name;
+        document.getElementById('locFloor').value = loc.floor;
+        document.getElementById('locZone').value = loc.zone;
+        document.getElementById('locQR').value = loc.qr_alias;
+      };
+      const delBtn = document.createElement('button');
+      delBtn.textContent = 'Delete';
+      delBtn.onclick = () => fetch('/api/locations/' + loc.id, { method: 'DELETE' }).then(fetchLocations);
+      const pinBtn = document.createElement('button');
+      pinBtn.textContent = 'Place Pin';
+      pinBtn.onclick = () => {
+        pendingLocationForPin = loc;
+        alert('Click the map to place a pin for: ' + loc.name);
+      };
+      actions.appendChild(editBtn);
+      actions.appendChild(delBtn);
+      actions.appendChild(pinBtn);
     });
+  });
 }
 
 document.getElementById('locationForm').addEventListener('submit', function (e) {
@@ -222,14 +224,19 @@ document.getElementById('loadMapBtn').onclick = () => {
 function loadMap() {
   const img = document.getElementById('adminMapImage');
   img.src = '/maps/' + selectedFloor + '.png';
-  img.onload = () => fetchMarkers();
+  img.onload = () => {
+    document.getElementById('gridCanvas').width = img.width;
+    document.getElementById('gridCanvas').height = img.height;
+    fetchMarkers();
+    renderMap();
+  };
 }
 
 document.getElementById('mapContainer').onclick = function (e) {
   if (!pendingLocationForPin || !selectedFloor) return;
   const rect = this.getBoundingClientRect();
-  const x = (e.clientX - rect.left) / currentZoom;
-  const y = (e.clientY - rect.top) / currentZoom;
+  const x = (e.clientX - rect.left - panOffset.x) / currentZoom;
+  const y = (e.clientY - rect.top - panOffset.y) / currentZoom;
   fetch('/api/markers', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -252,7 +259,6 @@ function addMarkerToMap(m) {
   marker.style.left = m.x + 'px';
   marker.style.top = m.y + 'px';
   marker.setAttribute('title', m.name || 'Unknown');
-  marker.setAttribute('data-id', m.id);
   marker.onclick = () => alert('Marker linked to: ' + (m.name || 'Unknown'));
   container.appendChild(marker);
 }
