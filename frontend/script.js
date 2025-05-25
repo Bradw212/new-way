@@ -1,56 +1,64 @@
-let markers = [];
+let locations = [];
 
 window.addEventListener('DOMContentLoaded', () => {
-  fetch('/api/markers')
+  fetch('/api/locations')
     .then(res => res.json())
     .then(data => {
-      markers = data;
+      locations = data;
+
       const startList = document.getElementById('startList');
       const destList = document.getElementById('destList');
-      markers.forEach(m => {
+
+      data.forEach(loc => {
         const opt1 = document.createElement('option');
-        opt1.value = m.name;
+        opt1.value = loc.name;
         startList.appendChild(opt1);
+
         const opt2 = document.createElement('option');
-        opt2.value = m.name;
+        opt2.value = loc.name;
         destList.appendChild(opt2);
       });
 
-      // Check URL param for start
+      // QR alias override
       const urlParams = new URLSearchParams(window.location.search);
-      if (urlParams.has('start')) {
-        document.getElementById('startInput').value = urlParams.get('start');
+      if (urlParams.has('qr')) {
+        const qrAlias = urlParams.get('qr');
+        const matched = locations.find(l => l.qr_alias === qrAlias);
+        if (matched) {
+          document.getElementById('startInput').value = matched.name;
+        }
       }
     })
-    .catch(err => console.error('Error loading markers:', err));
+    .catch(err => console.error('Failed to load locations:', err));
 });
 
-// QR code scanning
 document.getElementById('scanBtn').addEventListener('click', () => {
   document.getElementById('reader').style.display = 'block';
   const html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: 250 });
-  html5QrcodeScanner.render((decodedText, decodedResult) => {
-    document.getElementById('startInput').value = decodedText;
+  html5QrcodeScanner.render((decodedText) => {
+    const match = locations.find(l => l.qr_alias === decodedText);
+    if (match) {
+      document.getElementById('startInput').value = match.name;
+    } else {
+      alert("QR code not recognised.");
+    }
     html5QrcodeScanner.clear();
     document.getElementById('reader').style.display = 'none';
-  }, error => {
-    // Ignore scan errors
-  });
+  }, () => {});
 });
 
-// Route finder
 document.getElementById('routeBtn').addEventListener('click', () => {
   const startName = document.getElementById('startInput').value;
   const destName = document.getElementById('destInput').value;
-  const startMarker = markers.find(m => m.name === startName);
-  const destMarker = markers.find(m => m.name === destName);
+  const start = locations.find(l => l.name === startName);
+  const dest = locations.find(l => l.name === destName);
 
-  if (!startMarker || !destMarker) {
+  if (!start || !dest) {
     alert('Please select valid start and destination.');
     return;
   }
 
-  if (startMarker.floor !== destMarker.floor) {
+  if (start.floor !== dest.floor) {
     alert('Start and destination are on different floors.');
     return;
   }
@@ -58,28 +66,41 @@ document.getElementById('routeBtn').addEventListener('click', () => {
   const canvas = document.getElementById('mapCanvas');
   const ctx = canvas.getContext('2d');
   const mapImage = new Image();
-  mapImage.src = '/maps/' + startMarker.floor + '.png';
+  mapImage.src = '/maps/' + start.floor + '.png';
   mapImage.onload = () => {
     canvas.width = mapImage.width;
     canvas.height = mapImage.height;
     ctx.drawImage(mapImage, 0, 0);
 
-    // Draw route line
-    ctx.beginPath();
-    ctx.moveTo(startMarker.x, startMarker.y);
-    ctx.lineTo(destMarker.x, destMarker.y);
-    ctx.strokeStyle = 'red';
-    ctx.lineWidth = 3;
-    ctx.stroke();
+    fetch('/api/markers')
+      .then(res => res.json())
+      .then(allMarkers => {
+        const startMarker = allMarkers.find(m => m.name === start.name);
+        const destMarker = allMarkers.find(m => m.name === dest.name);
 
-    // Draw start and end circles
-    ctx.fillStyle = 'blue';
-    ctx.beginPath();
-    ctx.arc(startMarker.x, startMarker.y, 5, 0, 2 * Math.PI);
-    ctx.fill();
+        if (!startMarker || !destMarker) {
+          alert('Markers missing for selected locations.');
+          return;
+        }
 
-    ctx.beginPath();
-    ctx.arc(destMarker.x, destMarker.y, 5, 0, 2 * Math.PI);
-    ctx.fill();
+        // Draw line
+        ctx.beginPath();
+        ctx.moveTo(startMarker.x, startMarker.y);
+        ctx.lineTo(destMarker.x, destMarker.y);
+        ctx.strokeStyle = 'red';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        // Mark start
+        ctx.fillStyle = 'blue';
+        ctx.beginPath();
+        ctx.arc(startMarker.x, startMarker.y, 5, 0, 2 * Math.PI);
+        ctx.fill();
+
+        // Mark destination
+        ctx.beginPath();
+        ctx.arc(destMarker.x, destMarker.y, 5, 0, 2 * Math.PI);
+        ctx.fill();
+      });
   };
 });
