@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Admin Dashboard</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+
+    h1 {
+      margin-bottom: 20px;
+    }
+
+    #uploadSection {
+      margin-bottom: 20px;
+    }
+
+    #mapContainer {
+      position: relative;
+      display: inline-block;
+    }
+
+    #adminMapImage {
+      max-width: 800px;
+      border: 1px solid #ccc;
+    }
+
+    .marker {
+      width: 14px;
+      height: 14px;
+      background: red;
+      border: 2px solid white;
+      border-radius: 50%;
+      position: absolute;
+      transform: translate(-50%, -50%);
+      cursor: move;
+    }
+
+    table {
+      border-collapse: collapse;
+      margin-top: 20px;
+    }
+
+    table, th, td {
+      border: 1px solid #ccc;
+      padding: 5px;
+    }
+
+    input, button {
+      margin: 5px;
+      padding: 5px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Admin Dashboard</h1>
+
+  <div id="uploadSection">
+    <h3>Upload PNG Floor Map</h3>
+    <label>Floor Name:</label>
+    <input type="text" id="floorInput" placeholder="e.g. 1 or ground" />
+    <input type="file" id="mapFile" accept=".png" />
+    <button id="uploadBtn">Upload</button>
+    <button id="loadMapBtn">Load Map</button>
+    <p id="uploadStatus"></p>
+  </div>
+
+  <div id="mapContainer">
+    <img id="adminMapImage" src="" alt="Map will appear here" />
+  </div>
+
+  <h3>Markers Table</h3>
+  <table id="markersTable">
+    <thead>
+      <tr><th>Name</th><th>X</th><th>Y</th><th>Floor</th><th>Delete</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    let selectedFloor = '';
+    let markers = [];
+
+    function fetchMarkers() {
+      fetch('/api/markers')
+        .then(res => res.json())
+        .then(data => {
+          markers = data;
+          updateMarkersTable();
+        });
+    }
+
+    function updateMarkersTable() {
+      const tbody = document.querySelector('#markersTable tbody');
+      tbody.innerHTML = '';
+      markers.forEach(m => {
+        const row = tbody.insertRow();
+        row.insertCell().innerText = m.name;
+        row.insertCell().innerText = m.x;
+        row.insertCell().innerText = m.y;
+        row.insertCell().innerText = m.floor;
+
+        const delCell = row.insertCell();
+        const btn = document.createElement('button');
+        btn.innerText = 'Delete';
+        btn.onclick = () => {
+          fetch('/api/markers/' + m.id, { method: 'DELETE' })
+            .then(() => {
+              fetchMarkers();
+              loadMap();
+            });
+        };
+        delCell.appendChild(btn);
+      });
+    }
+
+    function addMarkerToMap(m) {
+      const container = document.getElementById('mapContainer');
+      const marker = document.createElement('div');
+      marker.className = 'marker';
+      marker.style.left = m.x + 'px';
+      marker.style.top = m.y + 'px';
+      marker.setAttribute('data-id', m.id);
+      marker.setAttribute('data-name', m.name);
+
+      marker.onmousedown = function (e) {
+        e.preventDefault();
+        let shiftX = e.clientX - marker.getBoundingClientRect().left;
+        let shiftY = e.clientY - marker.getBoundingClientRect().top;
+
+        function moveAt(pageX, pageY) {
+          marker.style.left = (pageX - container.getBoundingClientRect().left - shiftX + 7) + 'px';
+          marker.style.top = (pageY - container.getBoundingClientRect().top - shiftY + 7) + 'px';
+        }
+
+        function onMouseMove(e) {
+          moveAt(e.pageX, e.pageY);
+        }
+
+        document.addEventListener('mousemove', onMouseMove);
+
+        document.onmouseup = function () {
+          document.removeEventListener('mousemove', onMouseMove);
+          document.onmouseup = null;
+
+          const newX = parseInt(marker.style.left);
+          const newY = parseInt(marker.style.top);
+          const id = marker.getAttribute('data-id');
+          const name = marker.getAttribute('data-name');
+
+          fetch('/api/markers/' + id, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, x: newX, y: newY, floor: selectedFloor })
+          });
+          fetchMarkers();
+        };
+      };
+
+      marker.ondragstart = () => false;
+
+      marker.ondblclick = () => {
+        const id = marker.getAttribute('data-id');
+        if (confirm('Delete marker "' + marker.getAttribute('data-name') + '"?')) {
+          fetch('/api/markers/' + id, { method: 'DELETE' })
+            .then(() => {
+              marker.remove();
+              fetchMarkers();
+            });
+        }
+      };
+
+      container.appendChild(marker);
+    }
+
+    function loadMap() {
+      const floor = document.getElementById('floorInput').value.trim();
+      if (!floor) return alert('Enter a floor name first');
+
+      selectedFloor = floor;
+      const img = document.getElementById('adminMapImage');
+      img.src = '/maps/' + floor + '.png';
+
+      img.onload = () => {
+        document.querySelectorAll('.marker').forEach(el => el.remove());
+        markers.filter(m => m.floor === floor).forEach(m => {
+          addMarkerToMap(m);
+        });
+      };
+    }
+
+    // Upload PNG
+    document.getElementById('uploadBtn').onclick = () => {
+      const file = document.getElementById('mapFile').files[0];
+      const floor = document.getElementById('floorInput').value.trim();
+      if (!file || !floor) return alert('Select a file and enter floor name');
+
+      const formData = new FormData();
+      formData.append('map', file);
+      formData.append('floor', floor);
+
+      fetch('/api/upload', { method: 'POST', body: formData })
+        .then(res => res.json())
+        .then(result => {
+          document.getElementById('uploadStatus').innerText = 'Uploaded: ' + result.file;
+          loadMap();
+        });
+    };
+
+    // Load button
+    document.getElementById('loadMapBtn').onclick = () => {
+      fetchMarkers();
+      loadMap();
+    };
+
+    // Add marker on map click
+    document.getElementById('mapContainer').onclick = function (e) {
+      const rect = this.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const name = prompt('Enter marker name:');
+      if (!name || !selectedFloor) return;
+
+      fetch('/api/markers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, x: Math.round(x), y: Math.round(y), floor: selectedFloor })
+      })
+        .then(res => res.json())
+        .then(newMarker => {
+          markers.push(newMarker);
+          addMarkerToMap(newMarker);
+          updateMarkersTable();
+        });
+    };
+
+    fetchMarkers();
+  </script>
+</body>
+</html>
