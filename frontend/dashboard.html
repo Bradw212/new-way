@@ -7,44 +7,30 @@
     body { font-family: Arial, sans-serif; margin: 20px; }
     h1 { margin-bottom: 20px; }
     #uploadSection, #markerSection, #locationSection { margin-bottom: 30px; }
-
-    #mapContainer {
-      position: relative;
-      display: inline-block;
-    }
-    #adminMapImage {
-      max-width: 800px;
-      border: 1px solid #ccc;
-    }
+    #mapContainer { position: relative; display: inline-block; transform-origin: top left; }
+    #adminMapImage { max-width: 800px; border: 1px solid #ccc; cursor: zoom-in; }
     .marker {
-      width: 14px;
-      height: 14px;
-      background: red;
-      border: 2px solid white;
-      border-radius: 50%;
-      position: absolute;
-      transform: translate(-50%, -50%);
+      width: 14px; height: 14px; background: red; border: 2px solid white;
+      border-radius: 50%; position: absolute; transform: translate(-50%, -50%);
       cursor: move;
     }
-
-    table {
-      border-collapse: collapse;
-      margin-top: 10px;
+    table { border-collapse: collapse; margin-top: 10px; }
+    table, th, td { border: 1px solid #ccc; padding: 5px; }
+    input, select, button { margin: 5px; padding: 5px; }
+    #zoomControls { margin-top: 10px; }
+    #fullscreenOverlay {
+      display: none; position: fixed; top: 0; left: 0;
+      width: 100%; height: 100%; background: rgba(0,0,0,0.9);
+      z-index: 1000; justify-content: center; align-items: center;
     }
-    table, th, td {
-      border: 1px solid #ccc;
-      padding: 5px;
-    }
-    input, select, button {
-      margin: 5px;
-      padding: 5px;
+    #fullscreenOverlay img {
+      max-width: 95%; max-height: 95%; border: 2px solid white; cursor: zoom-out;
     }
   </style>
 </head>
 <body>
   <h1>Admin Dashboard</h1>
 
-  <!-- UPLOAD SECTION -->
   <div id="uploadSection">
     <h3>Upload PNG Floor Map</h3>
     <label>Floor:</label>
@@ -55,49 +41,71 @@
     <p id="uploadStatus"></p>
   </div>
 
-  <!-- MAP & MARKERS -->
   <div id="markerSection">
     <h3>Map View & Pins</h3>
-    <p>Click map to place a pin for a saved location. Drag to reposition. Double-click to delete.</p>
-    <div id="mapContainer">
-      <img id="adminMapImage" src="" alt="Map not loaded yet" />
+    <div id="zoomControls">
+      <button onclick="setZoom(1)">Reset Zoom</button>
+      <button onclick="setZoom(currentZoom + 0.2)">+ Zoom In</button>
+      <button onclick="setZoom(currentZoom - 0.2)">– Zoom Out</button>
     </div>
-
-    <h4>Marker Table</h4>
-    <table id="markersTable">
-      <thead>
-        <tr><th>Location</th><th>X</th><th>Y</th><th>Floor</th><th>Delete</th></tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+    <div id="mapContainer">
+      <img id="adminMapImage" src="" alt="Map not loaded yet" onclick="toggleFullscreen()" />
+    </div>
   </div>
 
-  <!-- LOCATION MANAGER -->
+  <div id="fullscreenOverlay" onclick="toggleFullscreen()">
+    <img id="fullscreenImage" src="" />
+  </div>
+
   <div id="locationSection">
     <h3>Location Manager</h3>
     <form id="locationForm">
       <input type="hidden" id="locationId" />
       <input type="text" id="locName" placeholder="Location Name" required />
-      <input type="text" id="locFloor" placeholder="Floor (e.g. 1)" />
+      <input type="text" id="locFloor" placeholder="Floor" />
       <input type="text" id="locZone" placeholder="Zone (optional)" />
-      <input type="text" id="locQR" placeholder="QR alias (e.g. pharmacy)" />
+      <input type="text" id="locQR" placeholder="QR alias" />
       <button type="submit">Save Location</button>
     </form>
 
     <table id="locationsTable">
       <thead>
-        <tr><th>Name</th><th>Floor</th><th>Zone</th><th>QR Alias</th><th>Edit</th><th>Delete</th></tr>
+        <tr><th>Name</th><th>Floor</th><th>Zone</th><th>QR Alias</th><th>Actions</th></tr>
       </thead>
       <tbody></tbody>
     </table>
   </div>
 
 <script>
+let selectedFloor = '';
 let markers = [];
 let locations = [];
-let selectedFloor = '';
+let pendingLocationForPin = null;
+let currentZoom = 1;
 
-// Fetch and display locations
+function setZoom(scale) {
+  currentZoom = Math.max(0.5, Math.min(3, scale));
+  document.getElementById('mapContainer').style.transform = 'scale(' + currentZoom + ')';
+}
+
+function toggleFullscreen() {
+  const overlay = document.getElementById('fullscreenOverlay');
+  const img = document.getElementById('adminMapImage');
+  const fullImg = document.getElementById('fullscreenImage');
+  overlay.style.display = overlay.style.display === 'flex' ? 'none' : 'flex';
+  fullImg.src = img.src;
+}
+
+function fetchMarkers() {
+  fetch('/api/markers')
+    .then(res => res.json())
+    .then(data => {
+      markers = data;
+      document.querySelectorAll('.marker').forEach(el => el.remove());
+      markers.filter(m => m.floor === selectedFloor).forEach(addMarkerToMap);
+    });
+}
+
 function fetchLocations() {
   fetch('/api/locations')
     .then(res => res.json())
@@ -111,8 +119,9 @@ function fetchLocations() {
         row.insertCell().innerText = loc.floor;
         row.insertCell().innerText = loc.zone;
         row.insertCell().innerText = loc.qr_alias;
+        const actions = row.insertCell();
         const editBtn = document.createElement('button');
-        editBtn.innerText = 'Edit';
+        editBtn.textContent = 'Edit';
         editBtn.onclick = () => {
           document.getElementById('locationId').value = loc.id;
           document.getElementById('locName').value = loc.name;
@@ -121,85 +130,48 @@ function fetchLocations() {
           document.getElementById('locQR').value = loc.qr_alias;
         };
         const delBtn = document.createElement('button');
-        delBtn.innerText = 'Delete';
+        delBtn.textContent = 'Delete';
         delBtn.onclick = () => {
-          fetch('/api/locations/' + loc.id, { method: 'DELETE' })
-            .then(() => fetchLocations());
+          fetch('/api/locations/' + loc.id, { method: 'DELETE' }).then(fetchLocations);
         };
-        row.insertCell().appendChild(editBtn);
-        row.insertCell().appendChild(delBtn);
+        const pinBtn = document.createElement('button');
+        pinBtn.textContent = 'Place Pin';
+        pinBtn.onclick = () => {
+          pendingLocationForPin = loc;
+          alert('Click the map to place a pin for: ' + loc.name);
+        };
+        actions.appendChild(editBtn);
+        actions.appendChild(delBtn);
+        actions.appendChild(pinBtn);
       });
     });
 }
 
-// Save (add or update) location
-document.getElementById('locationForm').addEventListener('submit', function(e) {
+document.getElementById('locationForm').addEventListener('submit', function (e) {
   e.preventDefault();
   const id = document.getElementById('locationId').value;
-  const name = document.getElementById('locName').value;
-  const floor = document.getElementById('locFloor').value;
-  const zone = document.getElementById('locZone').value;
-  const qr = document.getElementById('locQR').value;
-  const payload = { name, floor, zone, qr_alias: qr };
-
-  if (id) {
-    fetch('/api/locations/' + id, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    }).then(() => {
-      this.reset();
-      fetchLocations();
-    });
-  } else {
-    fetch('/api/locations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    }).then(() => {
-      this.reset();
-      fetchLocations();
-    });
-  }
+  const payload = {
+    name: document.getElementById('locName').value,
+    floor: document.getElementById('locFloor').value,
+    zone: document.getElementById('locZone').value,
+    qr_alias: document.getElementById('locQR').value
+  };
+  const method = id ? 'PUT' : 'POST';
+  const url = id ? '/api/locations/' + id : '/api/locations';
+  fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }).then(() => {
+    this.reset();
+    fetchLocations();
+  });
 });
 
-// Fetch and display markers
-function fetchMarkers() {
-  fetch('/api/markers')
-    .then(res => res.json())
-    .then(data => {
-      markers = data;
-      updateMarkersTable();
-    });
-}
-
-// Show marker table
-function updateMarkersTable() {
-  const tbody = document.querySelector('#markersTable tbody');
-  tbody.innerHTML = '';
-  markers.forEach(m => {
-    const row = tbody.insertRow();
-    row.insertCell().innerText = m.name || 'Unnamed';
-    row.insertCell().innerText = m.x;
-    row.insertCell().innerText = m.y;
-    row.insertCell().innerText = m.floor;
-    const btn = document.createElement('button');
-    btn.innerText = 'Delete';
-    btn.onclick = () => {
-      fetch('/api/markers/' + m.id, { method: 'DELETE' }).then(() => {
-        fetchMarkers();
-        loadMap();
-      });
-    };
-    row.insertCell().appendChild(btn);
-  });
-}
-
-// Upload map
 document.getElementById('uploadBtn').onclick = () => {
   const file = document.getElementById('mapFile').files[0];
   const floor = document.getElementById('floorInput').value.trim();
-  if (!file || !floor) return alert('File and floor required');
+  if (!file || !floor) return alert('Select a file and enter floor name');
   const formData = new FormData();
   formData.append('map', file);
   formData.append('floor', floor);
@@ -217,14 +189,30 @@ document.getElementById('loadMapBtn').onclick = () => {
 };
 
 function loadMap() {
-  if (!selectedFloor) return;
   const img = document.getElementById('adminMapImage');
   img.src = '/maps/' + selectedFloor + '.png';
-  img.onload = () => {
-    document.querySelectorAll('.marker').forEach(el => el.remove());
-    markers.filter(m => m.floor === selectedFloor).forEach(addMarkerToMap);
-  };
+  img.onload = () => fetchMarkers();
 }
+
+document.getElementById('mapContainer').onclick = function (e) {
+  if (!pendingLocationForPin || !selectedFloor) return;
+  const rect = this.getBoundingClientRect();
+  const x = (e.clientX - rect.left) / currentZoom;
+  const y = (e.clientY - rect.top) / currentZoom;
+  fetch('/api/markers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      location_id: pendingLocationForPin.id,
+      x: Math.round(x),
+      y: Math.round(y),
+      floor: selectedFloor
+    })
+  }).then(() => {
+    pendingLocationForPin = null;
+    fetchMarkers();
+  });
+};
 
 function addMarkerToMap(m) {
   const container = document.getElementById('mapContainer');
@@ -233,89 +221,13 @@ function addMarkerToMap(m) {
   marker.style.left = m.x + 'px';
   marker.style.top = m.y + 'px';
   marker.setAttribute('data-id', m.id);
-  marker.setAttribute('data-name', m.name || '');
-
-  marker.onmousedown = function (e) {
-    e.preventDefault();
-    let shiftX = e.clientX - marker.getBoundingClientRect().left;
-    let shiftY = e.clientY - marker.getBoundingClientRect().top;
-
-    function moveAt(pageX, pageY) {
-      marker.style.left = (pageX - container.getBoundingClientRect().left - shiftX + 7) + 'px';
-      marker.style.top = (pageY - container.getBoundingClientRect().top - shiftY + 7) + 'px';
-    }
-
-    function onMouseMove(e) {
-      moveAt(e.pageX, e.pageY);
-    }
-
-    document.addEventListener('mousemove', onMouseMove);
-    document.onmouseup = function () {
-      document.removeEventListener('mousemove', onMouseMove);
-      document.onmouseup = null;
-      const newX = parseInt(marker.style.left);
-      const newY = parseInt(marker.style.top);
-      const id = marker.getAttribute('data-id');
-      const name = marker.getAttribute('data-name');
-      const loc = locations.find(l => l.name === name);
-      const location_id = loc ? loc.id : null;
-      fetch('/api/markers/' + id, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ location_id, x: newX, y: newY, floor: selectedFloor })
-      });
-      fetchMarkers();
-    };
-  };
-
   marker.ondblclick = () => {
-    const id = marker.getAttribute('data-id');
-    if (confirm('Delete this marker?')) {
-      fetch('/api/markers/' + id, { method: 'DELETE' }).then(() => {
-        marker.remove();
-        fetchMarkers();
-      });
-    }
+    fetch('/api/markers/' + m.id, { method: 'DELETE' }).then(() => marker.remove());
   };
-
-  marker.ondragstart = () => false;
   container.appendChild(marker);
 }
 
-// Add new marker on map click
-document.getElementById('mapContainer').onclick = function (e) {
-  if (!selectedFloor) return;
-  if (e.target.id !== 'adminMapImage') return;
-
-  const rect = this.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
-
-  const locName = prompt('Select location name (case-sensitive):\n' + locations.map(l => l.name).join('\n'));
-  const selectedLoc = locations.find(l => l.name === locName);
-  if (!selectedLoc) return alert('Invalid location.');
-
-  fetch('/api/markers', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      location_id: selectedLoc.id,
-      x: Math.round(x),
-      y: Math.round(y),
-      floor: selectedFloor
-    })
-  })
-    .then(res => res.json())
-    .then(newMarker => {
-      markers.push(newMarker);
-      addMarkerToMap(newMarker);
-      updateMarkersTable();
-    });
-};
-
-// Initial load
 fetchLocations();
-fetchMarkers();
 </script>
 </body>
 </html>
