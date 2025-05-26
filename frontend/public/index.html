@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Hospital Wayfinding</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+</head>
+<body>
+  <h1>Hospital Wayfinding</h1>
+
+  <label for="startInput">Start Location:</label>
+  <input list="startList" id="startInput" placeholder="Scan QR or select start" />
+  <datalist id="startList"></datalist>
+  <button id="scanBtn">Scan QR</button>
+  <br><br>
+
+  <div id="reader" style="width:300px;height:300px;"></div>
+
+  <label for="destInput">Destination:</label>
+  <input list="destList" id="destInput" placeholder="Select destination" />
+  <datalist id="destList"></datalist>
+  <br><br>
+
+  <button id="routeBtn">Find Route</button>
+  <br><br>
+
+  <canvas id="mapCanvas"></canvas>
+
+  <script src="script.js"></script>
+</body>
+</html>
