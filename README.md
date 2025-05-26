@@ -1,1 +1,0 @@
-Placeholder README — confirm package.json now works.
